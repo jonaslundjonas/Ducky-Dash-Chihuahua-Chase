@@ -1,0 +1,1043 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ducky Dash: Chihuahua Chase</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+        :root {
+            --bg-color: #111;
+            --game-bg: #000;
+            --wall-color: #33aadd;
+            --text-color: #ffd700;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Press Start 2P', monospace;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none; /* Prevent browser zooming/scrolling */
+        }
+
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border: 4px solid #222;
+            background-color: var(--game-bg);
+        }
+
+        canvas {
+            display: block;
+            /* Critical for pixel art look */
+            image-rendering: pixelated; 
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            /* Increased max-height to make it bigger on screen */
+            max-height: 95vh; 
+        }
+
+        #ui-layer {
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            font-size: 16px; /* Larger font */
+            text-transform: uppercase;
+            width: 560px; /* Matched to new canvas width */
+            max-width: 100%;
+        }
+
+        /* Added specific widths to ensure UI alignment */
+        #ui-layer > div {
+            flex: 1;
+        }
+        #score { text-align: left; }
+        #level { text-align: center; }
+        #lives { text-align: right; }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            text-align: center;
+        }
+
+        .overlay h1 {
+            color: #ff69b4; /* Pink */
+            font-size: 40px; /* Larger Title */
+            margin-bottom: 20px;
+            line-height: 1.5;
+            text-shadow: 4px 4px #fff;
+        }
+
+        .overlay p {
+            font-size: 18px; /* Larger text */
+            color: #fff;
+            margin-bottom: 30px;
+            line-height: 1.6;
+            max-width: 80%;
+        }
+
+        button {
+            background: #ff69b4;
+            border: 4px solid #fff;
+            color: #fff;
+            font-family: 'Press Start 2P', monospace;
+            padding: 25px 35px; /* Larger buttons */
+            font-size: 20px;
+            cursor: pointer;
+            text-transform: uppercase;
+        }
+
+        button:active {
+            background: #d44d92;
+            transform: translateY(2px);
+        }
+
+        #mobile-controls {
+            display: none; 
+            margin-top: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        @media (hover: none) and (pointer: coarse) {
+            #mobile-controls {
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="ui-layer">
+        <div id="score">SCORE: 0</div>
+        <div id="level">LEVEL: 1</div>
+        <div id="lives">LIVES: 5</div>
+    </div>
+
+    <div id="game-container">
+        <!-- Width/Height increased (14 * 40 = 560, 18 * 40 = 720) -->
+        <canvas id="gameCanvas" width="560" height="720"></canvas>
+        
+        <!-- Start Screen -->
+        <div id="start-screen" class="overlay">
+            <h1>DUCKY<br>DASH</h1>
+            <p>Help the Pink Ducky collect all bubbles!</p>
+            <p>Run away from <strong>FIXA</strong> the Chihuahua!</p>
+            <p>Eat Squeaky Toys to scare her!</p>
+            <button id="start-btn">INSERT COIN</button>
+        </div>
+
+        <!-- Game Over Screen -->
+        <div id="game-over-screen" class="overlay" style="display: none;">
+            <h1 id="go-title">GAME OVER</h1>
+            <p id="final-score">SCORE: 0</p>
+            <button id="restart-btn">TRY AGAIN</button>
+        </div>
+    </div>
+
+    <div id="mobile-controls">SWIPE TO MOVE</div>
+
+<script>
+/**
+ * DUCKY DASH - A Retro Pac-Man Clone
+ * * Technical Design:
+ * - Tile-based movement system.
+ * - Scaled up for better visibility (40px tiles).
+ * - Robust physics to prevent "tunneling" (walking through walls).
+ * - Multiple Level Designs.
+ */
+
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- Game Constants ---
+const TILE_SIZE = 40; // Increased size (was 32)
+const BASE_TILE_SIZE = 16; 
+const DRAW_SCALE = TILE_SIZE / BASE_TILE_SIZE; // 2.5
+
+const COLS = 14;
+const ROWS = 18; 
+const PACMAN_SPEED = 0.13; // Increased speed (was 0.12)
+// GHOST_SPEED is now calculated dynamically per level
+const GHOST_FLEE_SPEED = 0.06;
+
+// Colors
+const COLOR_WALL = '#4488ff';
+const COLOR_BG = '#000000';
+const COLOR_DOT = '#ffffff'; 
+const COLOR_POWER = '#ffeb3b'; 
+const COLOR_DUCKY = '#ff69b4'; 
+const COLOR_DUCKY_BILL = '#ff9800';
+const COLOR_CHIHUAHUA = '#8d6e63'; 
+const COLOR_CHIHUAHUA_HAIR = '#d7ccc8'; 
+
+// Directions
+const DIR = {
+    UP: { x: 0, y: -1 },
+    DOWN: { x: 0, y: 1 },
+    LEFT: { x: -1, y: 0 },
+    RIGHT: { x: 1, y: 0 },
+    NONE: { x: 0, y: 0 }
+};
+
+// Map Codes: 0=Empty, 1=Wall, 2=Dot, 3=Power, 4=Door, 5=PacmanStart, 6=GhostStart
+// We now have multiple layouts!
+const MAP_LAYOUTS = [
+    // Map 1: The Garden (Classic Balanced)
+    [
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,3,2,2,2,2,1,1,2,2,2,2,3,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,2,2,2,2,1,1,2,2,2,2,2,1],
+        [1,1,1,1,1,0,1,1,0,1,1,1,1,1],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0], // Open Tunnel
+        [1,1,1,1,1,0,1,1,0,1,1,1,1,1],
+        [1,2,2,2,2,2,1,1,2,2,2,2,2,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,2,2,1,2,2,2,2,1,2,2,2,1], // (6,12) is dot
+        [1,1,1,2,1,1,1,1,1,1,2,1,1,1],
+        [1,2,2,2,2,2,1,1,2,2,2,2,2,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,3,2,2,2,2,2,2,2,2,2,2,3,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ],
+    // Map 2: The Speedway (Vertical Corridors)
+    [
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,3,2,1,2,2,2,2,2,2,1,2,3,1],
+        [1,1,2,1,2,1,1,1,1,2,1,2,1,1],
+        [1,1,2,1,2,1,1,1,1,2,1,2,1,1],
+        [1,1,2,2,2,2,2,2,2,2,2,2,1,1],
+        [1,1,2,1,1,1,0,0,1,1,1,2,1,1],
+        [1,1,2,1,0,0,0,0,0,0,1,2,1,1],
+        [1,2,2,1,0,1,1,1,1,0,1,2,2,1],
+        [0,0,0,0,0,1,1,1,1,0,0,0,0,0], // Tunnel
+        [1,2,2,1,0,1,1,1,1,0,1,2,2,1],
+        [1,1,2,1,0,0,0,0,0,0,1,2,1,1],
+        [1,1,2,1,1,1,0,0,1,1,1,2,1,1],
+        [1,1,2,2,2,1,2,2,1,2,2,2,1,1],
+        [1,1,2,1,2,1,1,1,1,2,1,2,1,1],
+        [1,1,2,1,2,2,2,2,2,2,1,2,1,1],
+        [1,1,2,1,1,1,1,1,1,1,1,2,1,1],
+        [1,3,2,2,2,2,2,2,2,2,2,2,3,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ],
+    // Map 3: The Fortress (Complex Blocks)
+    [
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,2,2,2,2,1,1,1,1,2,2,2,2,1],
+        [1,2,1,1,2,2,2,2,2,2,1,1,2,1],
+        [1,2,1,3,1,1,2,2,1,1,3,1,2,1],
+        [1,2,1,2,1,1,2,2,1,1,2,1,2,1],
+        [1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+        [1,1,1,1,2,1,0,0,1,2,1,1,1,1],
+        [1,1,1,1,2,1,0,0,1,2,1,1,1,1],
+        [0,0,0,0,2,0,0,0,0,2,0,0,0,0], // Tunnel
+        [1,1,1,1,2,1,1,1,1,2,1,1,1,1],
+        [1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,1,3,2,2,2,2,2,2,3,1,2,1], // (6,12) safe
+        [1,2,1,1,1,2,1,1,2,1,1,1,2,1],
+        [1,2,2,2,1,2,1,1,2,1,2,2,2,1],
+        [1,1,1,2,2,2,2,2,2,2,2,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+    ]
+];
+
+// --- Game State ---
+let gameState = {
+    running: false,
+    score: 0,
+    lives: 3,
+    level: 1, // Added Level tracking
+    map: [],
+    pelletsLeft: 0,
+    powerMode: false,
+    powerTimer: 0,
+    timestamp: 0
+};
+
+let player = {};
+let ghosts = [];
+
+// Input State
+const keys = {
+    ArrowUp: false,
+    ArrowDown: false,
+    ArrowLeft: false,
+    ArrowRight: false
+};
+let lastInputMethod = 'keyboard'; // 'keyboard' or 'touch'
+
+// --- Audio System ---
+const Audio = (function() {
+    let ctx = null;
+    let enabled = false;
+
+    function init() {
+        if (!ctx) {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            enabled = true;
+        }
+    }
+
+    function playTone(freq, type, duration, vol=0.1) {
+        if (!enabled || !ctx) return;
+        try {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, ctx.currentTime);
+            gain.gain.setValueAtTime(vol, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.start();
+            osc.stop(ctx.currentTime + duration);
+        } catch(e) {}
+    }
+
+    return {
+        init,
+        waka: () => playTone(300, 'triangle', 0.1, 0.05),
+        eatGhost: () => playTone(800, 'square', 0.15, 0.1),
+        die: () => {
+            if(!enabled) return;
+            for(let i=0; i<10; i++) {
+                setTimeout(() => playTone(500 - (i*50), 'sawtooth', 0.1, 0.1), i*50);
+            }
+        },
+        start: () => {
+             if(!enabled) return;
+             [500, 600, 700, 800].forEach((f, i) => setTimeout(() => playTone(f, 'square', 0.1, 0.1), i*100));
+        }
+    };
+})();
+
+// --- Helper Functions ---
+
+function deepCopy(arr) {
+    return JSON.parse(JSON.stringify(arr));
+}
+
+function isWall(tx, ty) {
+    if (ty === 8 && (tx < 0 || tx >= COLS)) return false; // Tunnel is not a wall
+    if (tx < 0 || tx >= COLS || ty < 0 || ty >= ROWS) return true; // Bounds check
+    return gameState.map[ty][tx] === 1;
+}
+
+function canMove(tx, ty) {
+    return !isWall(tx, ty);
+}
+
+// --- Classes ---
+
+class Entity {
+    constructor(x, y, color) {
+        this.x = x; // Grid coordinates
+        this.y = y;
+        this.pixelX = x * TILE_SIZE; 
+        this.pixelY = y * TILE_SIZE;
+        this.color = color;
+        this.dir = DIR.NONE;
+        this.nextDir = DIR.NONE;
+        this.speed = PACMAN_SPEED;
+        this.baseSpeed = 0; // Store base speed for resetting after fear
+        this.moving = false;
+    }
+
+    // Abstract method to be overridden
+    processTurn() {}
+
+    update() {
+        const moveDist = this.speed * TILE_SIZE;
+        
+        // 1. Move pixel position
+        if (this.moving) {
+            this.pixelX += this.dir.x * moveDist;
+            this.pixelY += this.dir.y * moveDist;
+        }
+
+        // 2. Wrap Around (Tunnel)
+        if (this.pixelX < -TILE_SIZE) {
+            this.pixelX = (COLS) * TILE_SIZE;
+            this.x = COLS;
+        } else if (this.pixelX > (COLS) * TILE_SIZE) {
+            this.pixelX = -TILE_SIZE;
+            this.x = -1;
+        }
+
+        // 3. Check Alignment with Grid (Centering)
+        // We calculate the center of the current logical tile
+        // Note: We update this.x/y based on pixel position
+        let currentTileX = Math.round(this.pixelX / TILE_SIZE);
+        let currentTileY = Math.round(this.pixelY / TILE_SIZE);
+
+        let centerX = currentTileX * TILE_SIZE;
+        let centerY = currentTileY * TILE_SIZE;
+
+        // Distance to the center of the nearest tile
+        let dist = Math.sqrt(Math.pow(this.pixelX - centerX, 2) + Math.pow(this.pixelY - centerY, 2));
+
+        // If we are close to the center (within one frame's movement), SNAP to it and Decide
+        if (dist <= moveDist * 1.5) {
+            // We are "at" the tile center
+            this.x = currentTileX;
+            this.y = currentTileY;
+
+            // Perform logic (AI or Input)
+            this.processTurn();
+
+            // Check if we can continue moving in the (potentially new) direction
+            if (this.dir !== DIR.NONE && canMove(this.x + this.dir.x, this.y + this.dir.y)) {
+                this.moving = true;
+                
+                // Align perfectly on the axis we aren't moving on
+                if (this.dir.x !== 0) this.pixelY = this.y * TILE_SIZE;
+                if (this.dir.y !== 0) this.pixelX = this.x * TILE_SIZE;
+            } else {
+                // Hit a wall
+                this.moving = false;
+                this.pixelX = this.x * TILE_SIZE; // Hard snap to prevent drift
+                this.pixelY = this.y * TILE_SIZE;
+            }
+        } else {
+            // We are between tiles.
+            // Safety check: Are we walking into a wall because we missed a turn/snap?
+            // Calculate "next" tile based on direction
+            // If the next tile is a wall, and we have entered it, push back.
+            // (Skipped for simplicity, reliance on center-snap above should be sufficient with high enough framerate)
+        }
+    }
+}
+
+class Player extends Entity {
+    constructor(x, y) {
+        super(x, y, COLOR_DUCKY);
+        this.mouthOpen = 0;
+        this.mouthSpeed = 0.2;
+    }
+
+    processTurn() {
+        // 1. Check for queued turn (buffer)
+        if (this.nextDir !== DIR.NONE) {
+            if (canMove(this.x + this.nextDir.x, this.y + this.nextDir.y)) {
+                this.dir = this.nextDir;
+                this.nextDir = DIR.NONE;
+                return;
+            }
+        }
+
+        // 2. Stop if key released (Keyboard only)
+        // This prevents "auto-walking" unless using touch controls
+        if (lastInputMethod === 'keyboard') {
+            let isHoldingCurrent = false;
+            if (this.dir === DIR.UP && keys.ArrowUp) isHoldingCurrent = true;
+            if (this.dir === DIR.DOWN && keys.ArrowDown) isHoldingCurrent = true;
+            if (this.dir === DIR.LEFT && keys.ArrowLeft) isHoldingCurrent = true;
+            if (this.dir === DIR.RIGHT && keys.ArrowRight) isHoldingCurrent = true;
+
+            if (!isHoldingCurrent) {
+                // If we aren't holding the button for our current direction, stop.
+                this.dir = DIR.NONE;
+            }
+        }
+    }
+
+    update() {
+        super.update();
+        
+        // Mouth animation
+        this.mouthOpen += this.mouthSpeed;
+        if (this.mouthOpen > 1 || this.mouthOpen < 0) this.mouthSpeed = -this.mouthSpeed;
+
+        // Eat Dots (Collision based on center distance)
+        let cx = this.pixelX + TILE_SIZE/2;
+        let cy = this.pixelY + TILE_SIZE/2;
+        
+        // We use logical x,y because we snap to them
+        // Check if item exists at x,y
+        if (this.x >= 0 && this.x < COLS && this.y >= 0 && this.y < ROWS) {
+            let tileType = gameState.map[this.y][this.x];
+            if (tileType === 2 || tileType === 3) {
+                gameState.map[this.y][this.x] = 0;
+                gameState.score += (tileType === 2 ? 10 : 50);
+                gameState.pelletsLeft--;
+                Audio.waka();
+
+                if (tileType === 3) {
+                    gameState.powerMode = true;
+                    // Difficulty: Power mode gets shorter as level increases
+                    // Level 1: 1200 (20s) -> Level 10: 660 (11s)
+                    let duration = Math.max(300, 1200 - (gameState.level - 1) * 60);
+                    gameState.powerTimer = duration; 
+                    
+                    ghosts.forEach(g => {
+                        if (!g.dead) {
+                            g.scared = true;
+                            g.reverseDirection(); // Immediate turnaround
+                        }
+                    });
+                }
+
+                if (gameState.pelletsLeft <= 0) {
+                    nextLevel();
+                }
+                updateUI();
+            }
+        }
+    }
+
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2);
+        ctx.scale(DRAW_SCALE, DRAW_SCALE);
+
+        // Directions
+        if (this.dir === DIR.DOWN) ctx.rotate(Math.PI / 2);
+        if (this.dir === DIR.UP) ctx.rotate(-Math.PI / 2);
+        if (this.dir === DIR.LEFT) ctx.scale(-1, 1);
+
+        // Draw Rubber Ducky
+        ctx.fillStyle = COLOR_DUCKY;
+        ctx.beginPath();
+        ctx.ellipse(0, 2, 6, 4, 0, 0, Math.PI*2);
+        ctx.fill();
+        
+        ctx.beginPath();
+        ctx.arc(2, -3, 3.5, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = COLOR_DUCKY_BILL;
+        ctx.fillRect(4, -3, 3, 2);
+
+        ctx.fillStyle = '#000';
+        ctx.fillRect(3, -4, 1, 1);
+
+        ctx.restore();
+    }
+}
+
+class Ghost extends Entity {
+    constructor(x, y, color, type) {
+        super(x, y, color);
+        this.type = type; 
+        this.scared = false;
+        this.dead = false;
+        // Speed is set during initialization based on level
+    }
+
+    reverseDirection() {
+        // Used when power pellet is eaten to immediately swap direction
+        if (this.dir !== DIR.NONE && !this.dead) {
+            // Check if reversing is valid (it usually is unless we just spawned)
+            if (canMove(this.x - this.dir.x, this.y - this.dir.y)) {
+               this.dir = { x: -this.dir.x, y: -this.dir.y };
+            }
+        }
+    }
+
+    processTurn() {
+        // AI DECISION MAKING
+        let targetX = player.x;
+        let targetY = player.y;
+
+        // Adjust speed/target based on state
+        if (this.dead) {
+            this.speed = 0.20; // Very fast when dead
+            targetX = 7; 
+            targetY = 8;
+            // Check if we reached the pen
+            if (Math.abs(this.x - targetX) <= 1 && Math.abs(this.y - targetY) <= 1) {
+                this.dead = false;
+                this.scared = false;
+                this.speed = this.baseSpeed; 
+                this.dir = { x: 0, y: -1 }; // Exit pen
+                return;
+            }
+        } else if (this.scared) {
+            this.speed = GHOST_FLEE_SPEED;
+            // Target random noise/corner
+            targetX = (this.x * 7 + 3) % COLS; 
+            targetY = (this.y * 3 + 7) % ROWS;
+        } else {
+            this.speed = this.baseSpeed;
+            if (this.type === 1) { // Ambush
+                targetX += player.dir.x * 4;
+                targetY += player.dir.y * 4;
+            }
+        }
+
+        // Pick best direction
+        let bestDist = -1; // For finding max (scared)
+        let minDist = Infinity; // For finding min (chase)
+        let possibleDirs = [DIR.UP, DIR.DOWN, DIR.LEFT, DIR.RIGHT];
+        let chosenDir = this.dir;
+
+        // Filter valid moves
+        // We cannot reverse (unless dead)
+        let validDirs = possibleDirs.filter(d => {
+            // Cannot 180 unless dead
+            if (!this.dead && d.x === -this.dir.x && d.y === -this.dir.y) return false;
+            return canMove(this.x + d.x, this.y + d.y);
+        });
+
+        // If blocked (dead end or only reverse available), allow reverse
+        if (validDirs.length === 0) {
+            validDirs = possibleDirs.filter(d => canMove(this.x + d.x, this.y + d.y));
+        }
+
+        // If still 0 (trapped??), stay still
+        if (validDirs.length === 0) {
+            // Should not happen in valid map, but safe fallback
+            return;
+        }
+
+        // Choose best from valid
+        for (let d of validDirs) {
+            let tx = this.x + d.x;
+            let ty = this.y + d.y;
+            
+            // Simple distance squared
+            let dist = (tx - targetX)**2 + (ty - targetY)**2;
+            
+            if (this.scared && !this.dead) {
+                // If scared, pick LARGEST distance to player
+                // Actually we should calculate distance to PLAYER, not the random target calculated above
+                // To properly flee, we measure distance from player position
+                let distToPlayer = (tx - player.x)**2 + (ty - player.y)**2;
+                
+                if (distToPlayer > bestDist) {
+                    bestDist = distToPlayer;
+                    chosenDir = d;
+                }
+            } else {
+                // Pick SMALLEST distance to target
+                if (dist < minDist) {
+                    minDist = dist;
+                    chosenDir = d;
+                }
+            }
+        }
+        
+        this.dir = chosenDir;
+    }
+
+    update() {
+        super.update(); // Uses robust movement
+        
+        // Collision with Player
+        // Tighter collision radius (0.5 instead of 0.8) for better feel
+        let dist = Math.sqrt((this.pixelX - player.pixelX)**2 + (this.pixelY - player.pixelY)**2);
+        if (dist < TILE_SIZE * 0.5) {
+            if (this.dead) return;
+            
+            if (this.scared) {
+                this.dead = true;
+                this.scared = false;
+                gameState.score += 200;
+                Audio.eatGhost();
+                updateUI();
+            } else {
+                handleDeath();
+            }
+        }
+    }
+
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.pixelX + TILE_SIZE/2, this.pixelY + TILE_SIZE/2);
+        ctx.scale(DRAW_SCALE, DRAW_SCALE);
+        
+        // Flip sprite based on direction (Face the way we are moving)
+        if (this.dir.x === -1) {
+            ctx.scale(-1, 1);
+        }
+
+        if (this.dead) {
+            // Eyes
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-4, -2, 3, 3);
+            ctx.fillRect(1, -2, 3, 3);
+            ctx.fillStyle = '#00f';
+            ctx.fillRect(-3, -1, 1, 1);
+            ctx.fillRect(2, -1, 1, 1);
+        } else {
+            // Chihuahua
+            let c = this.scared ? '#00f' : this.color;
+            if (this.scared && gameState.powerTimer < 120 && Math.floor(Date.now() / 100) % 2 === 0) {
+                c = '#fff'; 
+            }
+
+            // --- TAIL ---
+            if (!this.scared) {
+                let tailWag = Math.sin(Date.now() / 40) * 2;
+                ctx.strokeStyle = c; 
+                ctx.lineWidth = 1.5;
+                ctx.lineCap = 'round';
+                ctx.beginPath();
+                // Tail comes out from the back-left side
+                ctx.moveTo(-4, 3);
+                // Curves up and out
+                ctx.quadraticCurveTo(-9, 0, -9 + tailWag, -5); 
+                ctx.stroke();
+            } else {
+                 // Scared tail tucked between legs
+                ctx.strokeStyle = '#aaf';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(-4, 6);
+                ctx.lineTo(-2, 9);
+                ctx.stroke();
+            }
+
+            // --- LEGS (Animated) ---
+            let walk = 0;
+            if (this.moving) {
+                walk = Math.sin(Date.now() / 40) * 2;
+            }
+            ctx.fillStyle = this.scared ? '#aaf' : COLOR_CHIHUAHUA_HAIR; 
+            
+            // Back Leg
+            ctx.fillRect(-5, 6, 2, 3 + walk);
+            // Front Leg
+            ctx.fillRect(3, 6, 2, 3 - walk);
+
+
+            // --- BODY ---
+            ctx.beginPath();
+            ctx.moveTo(-5, 1);
+            ctx.lineTo(5, 1);
+            ctx.lineTo(6, 7);
+            ctx.lineTo(-6, 7);
+            ctx.fill();
+
+            // --- HEAD ---
+            ctx.fillStyle = c;
+            ctx.beginPath();
+            ctx.ellipse(0, -3, 5.5, 4.5, 0, 0, Math.PI*2);
+            ctx.fill();
+
+            // Snout/Muzzle area
+            if (!this.scared) {
+                ctx.fillStyle = '#6d4c41';
+                ctx.beginPath();
+                ctx.ellipse(0, -1, 2.5, 2, 0, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = c; // Reset color
+            }
+            
+            // Ears
+            ctx.beginPath();
+            ctx.moveTo(-3, -6); ctx.lineTo(-8, -13); ctx.lineTo(-1, -8); // Left
+            ctx.moveTo(3, -6); ctx.lineTo(8, -13); ctx.lineTo(1, -8);   // Right
+            ctx.fill();
+
+            // Inner Ear Detail
+            if (!this.scared) {
+                ctx.fillStyle = '#a1887f'; 
+                ctx.beginPath();
+                ctx.moveTo(-3, -7); ctx.lineTo(-7, -12); ctx.lineTo(-2, -8);
+                ctx.moveTo(3, -7); ctx.lineTo(7, -12); ctx.lineTo(2, -8);
+                ctx.fill();
+            }
+
+            // Face Details
+            if (!this.scared) {
+                // Eyes
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(-2.5, -4, 1.5, 0, Math.PI*2); ctx.fill();
+                ctx.beginPath(); ctx.arc(2.5, -4, 1.5, 0, Math.PI*2); ctx.fill();
+                
+                // Shine
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-3, -5, 1, 1);
+                ctx.fillRect(2, -5, 1, 1);
+
+                // Nose
+                ctx.fillStyle = '#000';
+                ctx.beginPath(); ctx.arc(0, -1.5, 1, 0, Math.PI*2); ctx.fill();
+            } else {
+                // Scared face
+                ctx.fillStyle = '#fff'; 
+                ctx.fillRect(-3, 0, 6, 1);
+            }
+        }
+        ctx.restore();
+    }
+}
+
+// --- Core Functions ---
+
+function startNewGame() {
+    gameState.score = 0;
+    gameState.lives = 5;
+    gameState.level = 1;
+    initLevel();
+}
+
+function nextLevel() {
+    gameState.running = false;
+    gameState.level++;
+    
+    // Show brief "Level Up" feedback via UI or simply restart immediately
+    setTimeout(() => {
+        initLevel();
+        gameState.running = true;
+    }, 1000);
+}
+
+function initLevel() {
+    // Select Map based on Level (cycle through layouts)
+    let mapIndex = (gameState.level - 1) % MAP_LAYOUTS.length;
+    gameState.map = deepCopy(MAP_LAYOUTS[mapIndex]);
+    
+    gameState.pelletsLeft = 0;
+    
+    for(let y=0; y<ROWS; y++) {
+        for(let x=0; x<COLS; x++) {
+            if(gameState.map[y][x] === 2 || gameState.map[y][x] === 3) gameState.pelletsLeft++;
+        }
+    }
+
+    // Spawn Player
+    player = new Player(6, 12); 
+
+    // Calculate Difficulty
+    // Level 1: 0.07, Level 2: 0.075, ... Max 0.125
+    let levelSpeed = 0.07 + (gameState.level - 1) * 0.005;
+    if (levelSpeed > 0.125) levelSpeed = 0.125; // Cap speed so it's never faster than player (0.13)
+
+    // Spawn Ghosts (Just Fixa)
+    // Spawn at top-left corner (1, 1) to give player more space
+    let fixa = new Ghost(1, 1, COLOR_CHIHUAHUA, 0);
+    fixa.baseSpeed = levelSpeed;
+    fixa.speed = levelSpeed;
+    ghosts = [ fixa ];
+
+    gameState.powerMode = false;
+    gameState.powerTimer = 0;
+    updateUI();
+}
+
+function handleDeath() {
+    Audio.die();
+    gameState.lives--;
+    updateUI();
+    if (gameState.lives <= 0) {
+        gameOver(false);
+    } else {
+        // Reset positions
+        player.x = 6; player.y = 12; 
+        player.pixelX = 6*TILE_SIZE; player.pixelY = 12*TILE_SIZE;
+        player.dir = DIR.NONE; player.nextDir = DIR.NONE;
+        player.moving = false;
+        
+        ghosts.forEach((g, i) => {
+            // Reset ghost to top-left corner
+            g.x = 1; g.y = 1;
+            g.pixelX = g.x * TILE_SIZE; g.pixelY = g.y * TILE_SIZE;
+            g.dir = DIR.NONE;
+            g.moving = false;
+            g.scared = false;
+            g.speed = g.baseSpeed;
+        });
+        
+        gameState.running = false;
+        setTimeout(() => gameState.running = true, 1500);
+    }
+}
+
+function gameOver(win) {
+    gameState.running = false;
+    document.getElementById('game-over-screen').style.display = 'flex';
+    document.getElementById('go-title').textContent = win ? "YOU WIN!" : "GAME OVER";
+    document.getElementById('go-title').style.color = win ? "#4caf50" : "#f44336";
+    document.getElementById('final-score').textContent = "SCORE: " + gameState.score;
+}
+
+function updateUI() {
+    document.getElementById('score').innerText = `SCORE: ${gameState.score}`;
+    document.getElementById('level').innerText = `LEVEL: ${gameState.level}`;
+    document.getElementById('lives').innerText = `LIVES: ${gameState.lives}`;
+}
+
+// --- Drawing ---
+
+function drawMap() {
+    ctx.lineWidth = 2 * DRAW_SCALE;
+    ctx.lineCap = 'round';
+
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            let tile = gameState.map[y][x];
+            let px = x * TILE_SIZE;
+            let py = y * TILE_SIZE;
+
+            if (tile === 1) {
+                ctx.strokeStyle = COLOR_WALL;
+                ctx.strokeRect(
+                    px + 4 * DRAW_SCALE, 
+                    py + 4 * DRAW_SCALE, 
+                    TILE_SIZE - 8 * DRAW_SCALE, 
+                    TILE_SIZE - 8 * DRAW_SCALE
+                );
+            } else if (tile === 2) {
+                ctx.fillStyle = COLOR_DOT;
+                ctx.beginPath();
+                ctx.arc(px + TILE_SIZE/2, py + TILE_SIZE/2, 2 * DRAW_SCALE, 0, Math.PI*2);
+                ctx.fill();
+            } else if (tile === 3) {
+                if (Math.floor(Date.now() / 200) % 2 === 0) {
+                    ctx.fillStyle = COLOR_POWER;
+                    ctx.beginPath();
+                    ctx.arc(px + TILE_SIZE/2, py + TILE_SIZE/2, 5 * DRAW_SCALE, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+        }
+    }
+}
+
+function gameLoop() {
+    if (gameState.running) {
+        ctx.fillStyle = COLOR_BG;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Logic
+        player.update();
+        ghosts.forEach(g => g.update());
+
+        // Power Timer
+        if (gameState.powerMode) {
+            gameState.powerTimer--;
+            if (gameState.powerTimer <= 0) {
+                gameState.powerMode = false;
+                ghosts.forEach(g => { 
+                    g.scared = false; 
+                    g.dead = false; 
+                    g.speed = g.baseSpeed; // Reset speed
+                });
+            }
+        }
+
+        // Render
+        drawMap();
+        player.draw(ctx);
+        ghosts.forEach(g => g.draw(ctx));
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+// --- Inputs ---
+
+document.addEventListener('keydown', (e) => {
+    if (!gameState.running) return;
+    
+    // Prevent default scrolling for arrow keys
+    if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) {
+        e.preventDefault();
+    }
+
+    if (keys.hasOwnProperty(e.key)) {
+        lastInputMethod = 'keyboard';
+        keys[e.key] = true;
+        
+        if (e.key === 'ArrowUp') player.nextDir = DIR.UP;
+        if (e.key === 'ArrowDown') player.nextDir = DIR.DOWN;
+        if (e.key === 'ArrowLeft') player.nextDir = DIR.LEFT;
+        if (e.key === 'ArrowRight') player.nextDir = DIR.RIGHT;
+    }
+});
+
+document.addEventListener('keyup', (e) => {
+    if (keys.hasOwnProperty(e.key)) {
+        keys[e.key] = false;
+    }
+});
+
+// Reset keys on blur to prevent sticking
+window.addEventListener('blur', () => {
+    keys.ArrowUp = false;
+    keys.ArrowDown = false;
+    keys.ArrowLeft = false;
+    keys.ArrowRight = false;
+});
+
+// Touch / Swipe Controls
+let touchStartX = 0;
+let touchStartY = 0;
+
+document.addEventListener('touchstart', (e) => {
+    touchStartX = e.changedTouches[0].screenX;
+    touchStartY = e.changedTouches[0].screenY;
+}, {passive: false});
+
+document.addEventListener('touchmove', (e) => {
+    e.preventDefault(); 
+}, {passive: false});
+
+document.addEventListener('touchend', (e) => {
+    if (!gameState.running) return;
+    lastInputMethod = 'touch'; // Enable auto-walk for touch
+    
+    let touchEndX = e.changedTouches[0].screenX;
+    let touchEndY = e.changedTouches[0].screenY;
+    
+    let dx = touchEndX - touchStartX;
+    let dy = touchEndY - touchStartY;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+        player.nextDir = dx > 0 ? DIR.RIGHT : DIR.LEFT;
+    } else {
+        player.nextDir = dy > 0 ? DIR.DOWN : DIR.UP;
+    }
+}, {passive: false});
+
+// --- Initialization ---
+
+document.getElementById('start-btn').addEventListener('click', () => {
+    Audio.init();
+    Audio.start();
+    document.getElementById('start-screen').style.display = 'none';
+    startNewGame(); // Changed to new function
+    gameState.running = true;
+    gameState.score = 0;
+    updateUI();
+    gameLoop();
+});
+
+document.getElementById('restart-btn').addEventListener('click', () => {
+    document.getElementById('game-over-screen').style.display = 'none';
+    startNewGame(); // Changed to new function
+    gameState.running = true;
+    updateUI();
+});
+
+</script>
+</body>
+</html>
